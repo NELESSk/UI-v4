@@ -1,13 +1,13 @@
 local UI_TITLE = "UI v4 Developer discord : @nelessk"
 
-local function ShowVergilError(message)
-    warn("[Vergil White] " .. tostring(message))
+local function ShowUIv4Error(message)
+    warn("[UI v4] " .. tostring(message))
     pcall(function()
         local players = game:GetService("Players")
         local user = players.LocalPlayer
         local playerGui = user and user:FindFirstChildOfClass("PlayerGui")
         local gui = Instance.new("ScreenGui")
-        gui.Name = "VergilWhite_Error"
+        gui.Name = "UIv4_Error"
         gui.ResetOnSpawn = false
         gui.IgnoreGuiInset = true
         gui.DisplayOrder = 10000
@@ -27,7 +27,7 @@ local function ShowVergilError(message)
         title.TextXAlignment = Enum.TextXAlignment.Left
         title.TextColor3 = Color3.new(1,1,1)
         title.BackgroundTransparency = 1
-        title.Text = "VERGIL WHITE - ERROR"
+        title.Text = "UI v4 - ERROR"
         title.Parent = f
         local details = Instance.new("TextLabel")
         details.Size = UDim2.new(1,-24,1,-50)
@@ -48,8 +48,8 @@ local loaded, problem = xpcall(function()
 
 
 local Env = (type(getgenv) == "function" and getgenv()) or _G
-if Env.VergilLibrary and type(Env.VergilLibrary) == "table" and Env.VergilLibrary.Exit then
-    pcall(function() Env.VergilLibrary:Exit() end)
+if Env.UIv4Library and type(Env.UIv4Library) == "table" and Env.UIv4Library.Exit then
+    pcall(function() Env.UIv4Library:Exit() end)
 end
 
 local cloneref = cloneref or function(Object) return Object end
@@ -87,14 +87,12 @@ local Library = {
 
     Directory = "UI-v4",
     Folders = {
-        Assets = "/Assets",
         Configs = "/Configs"
     },
 
     Name = "UI v4",
-    Version = "4.0.0-library",
+    Version = "4.1.0",
     FontSize = 13,
-    FontUrl = "https://github.com/bluescan/proggyfonts/raw/master/ProggyOriginal/ProggyClean.ttf",
 
     Animation = {
         Time = 0.30,
@@ -107,8 +105,6 @@ local Library = {
 
     BlurEnabled = false,
     BlurSize = 0,
-    SnowEnabled = false,
-    SnowAmount = 0,
 
 
     Theme = {
@@ -162,7 +158,7 @@ local function New(Class, Props)
     elseif not ok then
         error("GUI class " .. tostring(Class) .. ": " .. tostring(Object), 2)
     end
-    Object.Name = "Vergil_" .. tostring(Class)
+    Object.Name = "UIv4_" .. tostring(Class)
 
     if Object:IsA("GuiObject") then
         Object.BorderSizePixel = 0
@@ -188,7 +184,7 @@ local function New(Class, Props)
             if not assigned then
 
                 if not (Class == "UIStroke" or Class == "UIListLayout" or ShadowFallback) then
-                    warn("[Vergil/compat] " .. Class .. "." .. tostring(Property) .. ": " .. tostring(why))
+                    warn("[UI v4/compat] " .. Class .. "." .. tostring(Property) .. ": " .. tostring(why))
                 end
             end
         end
@@ -230,7 +226,7 @@ local function SafeCall(Function, ...)
 
     local Ok, Result = pcall(Function, ...)
     if not Ok then
-        warn("[Vergil] callback error: " .. tostring(Result))
+        warn("[UI v4] callback error: " .. tostring(Result))
     end
 
     return Ok, Result
@@ -809,20 +805,20 @@ Library.Exit = function(Self)
         task.cancel(Thread)
     end
 
-    for _, Object in { Library.Holder, Library.PopupHolder, Library.DragHolder, Library.SnowHolder, Library.Blur } do
+    for _, Object in { Library.Holder, Library.PopupHolder, Library.DragHolder, Library.Blur } do
         if Object then pcall(function() Object:Destroy() end) end
     end
-    if Library.Loading then
-        Library.Loading.Gui:Destroy()
-    end
     Library.Unloaded = true
-    Env.VergilLibrary = nil
+    Env.UIv4Library = nil
 end
 
 Library.GetConfig = function(Self)
     local Config = { }
 
     for Index, Value in Library.Flags do
+        if Index == "config_selected" or Index == "config_file_name" then
+            continue
+        end
         if type(Value) == "table" and Value.Key then
             Config[Index] = { Key = tostring(Value.Key), Mode = Value.Mode }
         elseif type(Value) == "table" and Value.Color then
@@ -855,42 +851,173 @@ Library.LoadConfig = function(Self, Config)
     return Ok, Result
 end
 
-Library.GetConfigsList = function(Self, Element)
-    local List = { }
+Library.ConfigMemory = {}
+Library.AutoLoadMemory = nil
 
+local function ConfigNameValid(Name)
+    if type(Name) ~= "string" then return false end
+    if #Name < 1 or #Name > 48 then return false end
+    return Name:match("^[%w_%-]+$") ~= nil
+end
+
+local function EnsureConfigDirectory()
+    if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
+        return false
+    end
+    return pcall(function()
+        if not isfolder(Library.Directory) then makefolder(Library.Directory) end
+        if not isfolder(ConfigsFolder) then makefolder(ConfigsFolder) end
+    end)
+end
+
+local function PathForConfig(Name)
+    return ConfigsFolder .. "/" .. Name .. ".json"
+end
+
+local function TryRead(Path)
+    if type(readfile) ~= "function" then return nil end
+    local Ok, Data = pcall(readfile, Path)
+    if Ok and type(Data) == "string" and Data ~= "" then return Data end
+    return nil
+end
+
+local function TryWrite(Path, Data)
+    if type(writefile) ~= "function" then return false end
+    EnsureConfigDirectory()
+    return pcall(writefile, Path, Data)
+end
+
+local function TryDelete(Path)
+    if type(delfile) ~= "function" then return false end
+    return pcall(delfile, Path)
+end
+
+Library.GetConfigsList = function(Self, Element)
+    local Names = {}
+    for Name in pairs(Library.ConfigMemory) do
+        Names[Name] = true
+    end
     if type(listfiles) == "function" then
         local Ok, Files = pcall(listfiles, ConfigsFolder)
         if Ok and type(Files) == "table" then
             for _, File in Files do
-                local Name = File:match("([^/\\]+)%.json$")
-                if Name then
-                    table.insert(List, Name)
-                end
+                local Name = tostring(File):gsub("\\", "/"):match("([^/]+)%.json$")
+                if Name and ConfigNameValid(Name) then Names[Name] = true end
             end
         end
     end
-
-    table.sort(List)
-
-    if Element and Element.Refresh then
+    local List = {}
+    for Name in pairs(Names) do table.insert(List, Name) end
+    table.sort(List, function(A, B) return A:lower() < B:lower() end)
+    if Element and type(Element.Refresh) == "function" then
         Element:Refresh(List)
     end
-
     return List
 end
 
+Library.HasSavedConfig = function(Self, Name)
+    if not ConfigNameValid(Name) then return false end
+    return TryRead(PathForConfig(Name)) ~= nil or Library.ConfigMemory[Name] ~= nil
+end
 
-if type(isfolder) == "function" and type(makefolder) == "function" then
-    if not isfolder(Library.Directory) then
-        makefolder(Library.Directory)
+Library.SaveConfig = function(Self, Name)
+    if not ConfigNameValid(Name) then return false, "Invalid config name" end
+    local Ok, Encoded = pcall(function() return Self:GetConfig() end)
+    if not Ok or type(Encoded) ~= "string" then
+        return false, "Could not encode settings"
     end
+    Library.ConfigMemory[Name] = Encoded
+    if TryWrite(PathForConfig(Name), Encoded) then
+        return true, "file"
+    end
+    return true, "session"
+end
 
-    for _, Folder in Library.Folders do
-        if not isfolder(Library.Directory .. Folder) then
-            makefolder(Library.Directory .. Folder)
+Library.LoadSavedConfig = function(Self, Name)
+    if not ConfigNameValid(Name) then return false, "Invalid config name" end
+    local Encoded = TryRead(PathForConfig(Name)) or Library.ConfigMemory[Name]
+    if not Encoded then return false, "Config not found" end
+    local Ok, Reason = Self:LoadConfig(Encoded)
+    if not Ok then return false, tostring(Reason) end
+    return true
+end
+
+Library.RenameConfig = function(Self, OldName, NewName)
+    if not ConfigNameValid(OldName) or not ConfigNameValid(NewName) then
+        return false, "Invalid config name"
+    end
+    if OldName == NewName then return true end
+    if Self:HasSavedConfig(NewName) then return false, "Name already exists" end
+    local Saved = TryRead(PathForConfig(OldName)) or Library.ConfigMemory[OldName]
+    if not Saved then return false, "Config not found" end
+    local DiskCopy = TryRead(PathForConfig(OldName))
+    if DiskCopy then
+        if not TryWrite(PathForConfig(NewName), Saved) then
+            return false, "Could not write renamed config"
+        end
+        if not TryDelete(PathForConfig(OldName)) then
+            TryDelete(PathForConfig(NewName))
+            return false, "This executor cannot delete files"
         end
     end
+    Library.ConfigMemory[OldName] = nil
+    Library.ConfigMemory[NewName] = Saved
+    if Self:GetAutoLoad() == OldName then
+        Self:SetAutoLoad(NewName)
+    end
+    return true
 end
+
+Library.DeleteConfig = function(Self, Name)
+    if not ConfigNameValid(Name) then return false, "Invalid config name" end
+    if not Self:HasSavedConfig(Name) then return false, "Config not found" end
+    if TryRead(PathForConfig(Name)) and not TryDelete(PathForConfig(Name)) then
+        return false, "This executor cannot delete files"
+    end
+    Library.ConfigMemory[Name] = nil
+    if Self:GetAutoLoad() == Name then
+        Self:ResetAutoLoad()
+    end
+    return true
+end
+
+local AutoLoadFile = ConfigsFolder .. "/autoload.txt"
+
+Library.GetAutoLoad = function(Self)
+    local Data = TryRead(AutoLoadFile)
+    if Data then
+        local Name = Data:match("^%s*(.-)%s*$")
+        if ConfigNameValid(Name) then return Name end
+        return nil
+    end
+    return Library.AutoLoadMemory
+end
+
+Library.SetAutoLoad = function(Self, Name)
+    if not ConfigNameValid(Name) then return false, "Invalid config name" end
+    if not Self:HasSavedConfig(Name) then return false, "Save config first" end
+    Library.AutoLoadMemory = Name
+    if TryWrite(AutoLoadFile, Name) then return true, "file" end
+    return true, "session"
+end
+
+Library.ResetAutoLoad = function(Self)
+    Library.AutoLoadMemory = nil
+    if TryDelete(AutoLoadFile) or TryWrite(AutoLoadFile, "") then
+        return true, "file"
+    end
+    return true, "session"
+end
+
+Library.ApplyAutoLoad = function(Self)
+    local Name = Self:GetAutoLoad()
+    if not Name then return false, "Auto load not set" end
+    local Ok, Reason = Self:LoadSavedConfig(Name)
+    return Ok, Ok and Name or Reason
+end
+
+
+EnsureConfigDirectory()
 
 
 Library.Font = Font.fromEnum(Enum.Font.Code)
@@ -949,109 +1076,12 @@ end)
 
 Library.Blur = New("BlurEffect", { Parent = Lighting, Size = 0 })
 
-Library.SnowHolder = New("ScreenGui", {
-    Parent = GetHui(),
-    IgnoreGuiInset = true,
-    ResetOnSpawn = false,
-    DisplayOrder = 99,
-})
-
-local SnowFrame = New("Frame", {
-    Parent = Library.SnowHolder,
-    BackgroundTransparency = 1,
-    Size = UDim2.fromScale(1, 1),
-    Visible = false,
-})
-
-local SnowAlpha = Instance.new("NumberValue")
-SnowAlpha.Value = 0
-local Flakes = { }
-
-local function Viewport()
-    local Size = SnowFrame.AbsoluteSize
-    if Size.X < 1 then
-        Size = workspace.CurrentCamera.ViewportSize
-    end
-    return Size
-end
-
-local function NewFlake()
-    local Size = Viewport()
-    local Pixels = math.random(1, 3)
-
-    return {
-        Frame = New("Frame", {
-            Parent = SnowFrame,
-            Size = UDim2.fromOffset(Pixels, Pixels),
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            BackgroundTransparency = 1,
-        }),
-        X = math.random() * Size.X,
-        Y = math.random() * Size.Y,
-        Speed = 15 + Pixels * 15 + math.random() * 15,
-        Drift = math.random(-8, 8),
-        Sway = 0.5 + math.random(),
-        Phase = math.random() * math.pi * 2,
-        Opacity = 0.35 + math.random() * 0.55,
-    }
-end
-
-Library.SetSnowAmount = function(Self, Amount)
-
-    Amount = 0
-    Library.SnowAmount = Amount
-
-    while #Flakes < Amount do
-        table.insert(Flakes, NewFlake())
-    end
-
-    while #Flakes > Amount do
-        table.remove(Flakes).Frame:Destroy()
-    end
-end
-
 Library.UpdateEffects = function(Self)
     local Open = Library.MenuOpen
-
-    TweenService:Create(Library.Blur, FadeInfo("Window"), { Size = (Open and Library.BlurEnabled) and Library.BlurSize or 0 }):Play()
-
-    SnowAlpha.Value = 0
+    TweenService:Create(Library.Blur, FadeInfo("Window"), {
+        Size = (Open and Library.BlurEnabled) and Library.BlurSize or 0
+    }):Play()
 end
-
-local Clock = 0
-
-Connect(RunService.RenderStepped, function(Delta)
-    local Alpha = SnowAlpha.Value
-
-    SnowFrame.Visible = Alpha > 0.001
-    if not SnowFrame.Visible then
-        return
-    end
-
-    Clock += Delta
-    local Size = Viewport()
-
-    for _, Flake in Flakes do
-        Flake.Y += Flake.Speed * Delta
-        Flake.X += (Flake.Drift + math.sin(Clock * Flake.Sway + Flake.Phase) * 12) * Delta
-
-        if Flake.Y > Size.Y + 4 then
-            Flake.Y = -4
-            Flake.X = math.random() * Size.X
-        end
-
-        if Flake.X < -4 then
-            Flake.X += Size.X + 8
-        elseif Flake.X > Size.X + 4 then
-            Flake.X -= Size.X + 8
-        end
-
-        Flake.Frame.Position = UDim2.fromOffset(Flake.X, Flake.Y)
-        Flake.Frame.BackgroundTransparency = 1 - Flake.Opacity * Alpha
-    end
-end)
-
-Library:SetSnowAmount(Library.SnowAmount)
 
 
 local LogStyle = {
@@ -1384,176 +1414,6 @@ Connect(UserInputService.InputBegan, function(Input)
 end)
 
 
-Library.Loader = function(Self, Params)
-    Params = Params or { }
-    local Assets = Library.Directory .. Library.Folders.Assets
-    local Sheets = { }
-    for Index = 1, 3 do
-        local Path = `{Assets}/von_{Index}.png`
-        if not isfile(Path) then
-            writefile(Path, base64decode(game:HttpGet(`https://raw.githubusercontent.com/skekkstunsua-lgtm/von/refs/heads/main/von_{Index}.txt`)))
-        end
-        Sheets[Index] = getcustomasset(Path)
-    end
-    ContentProvider:PreloadAsync(Sheets)
-    local Gui = New("ScreenGui", {
-        Parent = GetHui(),
-        IgnoreGuiInset = true,
-        ResetOnSpawn = false,
-        DisplayOrder = 103,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    })
-    local Main = New("Frame", {
-        Parent = Gui,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(256, 314),
-        BackgroundTransparency = 0,
-    })
-    Themed(function() Main.BackgroundColor3 = Theme.Window end)
-    local Scale = New("UIScale", { Parent = Main, Scale = 0.85 })
-    local Stroke = New("UIStroke", {
-        Parent = Main,
-        Color = Color3.new(1, 1, 1),
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        LineJoinMode = Enum.LineJoinMode.Miter,
-        BorderStrokePosition = StrokeInner,
-        ZIndex = 2,
-    })
-    local StrokeGradient = New("UIGradient", { Parent = Stroke })
-    Themed(function() StrokeGradient.Color = AccentSequence(Theme.Accent:Lerp(Theme.Window, 0.6)) end)
-    New("UIStroke", {
-        Parent = Main,
-        Color = Color3.new(0, 0, 0),
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        LineJoinMode = Enum.LineJoinMode.Miter,
-        BorderOffset = UDim.new(0, 1),
-        BorderStrokePosition = StrokeInner,
-    })
-    local Title = New("TextLabel", {
-        Parent = Main,
-        Position = UDim2.fromOffset(10, 8),
-        Size = UDim2.new(1, -20, 0, 14),
-        RichText = true,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = Params.Name or Library.Name,
-    })
-    MainGradient(Title)
-    local Tag = New("TextLabel", {
-        Parent = Main,
-        Position = UDim2.fromOffset(10, 8),
-        Size = UDim2.new(1, -20, 0, 14),
-        TextXAlignment = Enum.TextXAlignment.Right,
-        Text = "loader",
-    })
-    Themed(function() Tag.TextColor3 = Theme["Dim Text"] end)
-    local LogoHolder = New("Frame", {
-        Parent = Main,
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 28),
-        Size = UDim2.fromOffset(236, 236),
-        BackgroundTransparency = 0,
-    })
-    Themed(function() LogoHolder.BackgroundColor3 = Theme.Background end)
-    Outline(LogoHolder)
-    local Logo = New("ImageLabel", {
-        Parent = LogoHolder,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(220, 220),
-        BackgroundTransparency = 1,
-        Image = Sheets[1],
-        ImageRectSize = Vector2.new(170, 170),
-    })
-    local Status = New("TextLabel", {
-        Parent = Main,
-        Position = UDim2.fromOffset(10, 274),
-        Size = UDim2.new(1, -20, 0, 12),
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Text = "loading...",
-    })
-    Themed(function() Status.TextColor3 = Theme["Dim Text"] end)
-    local Percent = New("TextLabel", {
-        Parent = Main,
-        Position = UDim2.fromOffset(10, 274),
-        Size = UDim2.new(1, -20, 0, 12),
-        TextXAlignment = Enum.TextXAlignment.Right,
-        Text = "0%",
-    })
-    Themed(function() Percent.TextColor3 = Theme.Accent end)
-    local Track = New("Frame", {
-        Parent = Main,
-        Position = UDim2.fromOffset(10, 294),
-        Size = UDim2.new(1, -20, 0, 6),
-        BackgroundTransparency = 0,
-    })
-    Themed(function() Track.BackgroundColor3 = Theme.Hover end)
-    Outline(Track)
-    local Fill = New("Frame", {
-        Parent = Track,
-        Size = UDim2.fromScale(0, 1),
-        BackgroundTransparency = 0,
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        ClipsDescendants = true,
-    })
-    local FillGradient = New("UIGradient", { Parent = Fill })
-    Themed(function() FillGradient.Color = ColorSequence.new(Theme["Element Accent"], Theme.Accent) end)
-    local Shimmer = New("Frame", {
-        Parent = Fill,
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 0,
-        BackgroundColor3 = Color3.new(1, 1, 1),
-    })
-    local ShimmerGradient = New("UIGradient", {
-        Parent = Shimmer,
-        Transparency = NumberSequence.new{
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.5, 0.55),
-            NumberSequenceKeypoint.new(1, 1),
-        },
-    })
-    local LastFrame = nil
-    local Animation = Connect(RunService.RenderStepped, function()
-        local Now = os.clock()
-        StrokeGradient.Rotation = Now * 90 % 360
-        ShimmerGradient.Offset = Vector2.new(Now * 0.8 % 2 - 1, 0)
-        local Frame = math.floor(Now * 25) % 75
-        if Frame == LastFrame then
-            return
-        end
-        LastFrame = Frame
-        local Cell = Frame % 36
-        Logo.Image = Sheets[Frame // 36 + 1]
-        Logo.ImageRectOffset = Vector2.new(Cell % 6 * 170, Cell // 6 * 170)
-    end)
-    TweenService:Create(Scale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-    local Loader = { Gui = Gui }
-    Library.Loading = Loader
-    function Loader:SetProgress(Alpha, Text)
-        Alpha = math.clamp(Alpha, 0, 1)
-        Tween(Fill, { Size = UDim2.fromScale(Alpha, 1) }, 0.25)
-        Percent.Text = `{math.floor(Alpha * 100)}%`
-        if Text then
-            Status.Text = Text
-        end
-        task.wait()
-    end
-    function Loader:Finish()
-        Loader:SetProgress(1, "done")
-        task.wait(0.35)
-        local Out = TweenService:Create(Scale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0 })
-        Out:Play()
-        Out.Completed:Wait()
-        Animation:Disconnect()
-        Gui:Destroy()
-        Library.Loading = nil
-        if Library.WindowObject then
-            Library.WindowObject:SetOpen(true)
-        end
-    end
-    return Loader
-end
-
 
 local Drag = nil
 
@@ -1652,7 +1512,10 @@ local function Reshape()
         Size = Vector2.new(Drag.Column.Scroll.AbsoluteSize.X - 4, Section.Height)
     end
 
-    Drag.Offset = Vector2.new(math.min(Drag.Offset.X, Size.X - 16), Drag.Offset.Y)
+    if not Drag.Column then
+        Size = Section:ClampFloatSize(Size)
+    end
+    Drag.Offset = Vector2.new(math.clamp(Drag.Offset.X, 0, math.max(Size.X - 16, 0)), Drag.Offset.Y)
     Glide(Section, "Size", { Size = UDim2.fromOffset(Size.X, Size.Y) })
 end
 
@@ -3983,6 +3846,7 @@ Library.Section = function(Self, Params)
         Hidden = false,
         FloatSize = nil,
         Born = os.clock(),
+        BaseWidth = nil,
         Tweens = { },
         Items = { },
     }
@@ -3997,8 +3861,15 @@ Library.Section = function(Self, Params)
     Outline(Frame, "Outline", true)
     Shade(Frame, 90)
 
-    local Accent = Highlight(Frame, "Background")
-    Accent.Visible = false
+    local Accent = New("Frame", {
+        Parent = Frame,
+        Size = UDim2.new(1, 0, 0, 1),
+        Position = UDim2.fromOffset(0, 0),
+        BackgroundTransparency = 0,
+        Visible = false,
+        ZIndex = 5,
+    })
+    Themed(function() Accent.BackgroundColor3 = Theme["Element Accent"] end)
 
     local Shadow = New("UIShadow", { })
 
@@ -4015,7 +3886,7 @@ Library.Section = function(Self, Params)
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = Section.Name,
     })
-    TitleGradient(Title)
+    Themed(function() Title.TextColor3 = Theme.Text end)
 
     local Body = New("ScrollingFrame", {
         Parent = Frame,
@@ -4097,7 +3968,14 @@ Library.Section = function(Self, Params)
         Section.Height = Content + 42
         Body.CanvasSize = UDim2.fromOffset(0, Content + 4)
 
-        if Section.State ~= "Docked" then
+        if Section.State == "Floating" and Section.FloatSize then
+            local Clamped = Section:ClampFloatSize(Section.FloatSize)
+            if Clamped ~= Section.FloatSize then
+                Section.FloatSize = Clamped
+                Glide(Section, "Size", { Size = UDim2.fromOffset(Clamped.X, Clamped.Y) })
+            end
+            return
+        elseif Section.State ~= "Docked" then
             return
         end
 
@@ -4127,9 +4005,32 @@ Library.Section = function(Self, Params)
         end
     end
 
+    function Section:FloatLimits()
+        local Screen = Library.Holder.AbsoluteSize
+        local MaxScreenWidth = math.max(180, Screen.X - 24)
+        local MaxScreenHeight = math.max(70, Screen.Y - 24)
+        local BaseWidth = Section.BaseWidth or (Section.Window.Size.X.Offset / 2 - 28)
+        local MinWidth = math.min(math.max(190, BaseWidth), MaxScreenWidth)
+        local MinHeight = math.min(math.max(Section.Height, 64), MaxScreenHeight)
+        local MaxWidth = math.min(MaxScreenWidth, MinWidth + 100)
+        local MaxHeight = math.min(MaxScreenHeight, MinHeight + 160)
+        return MinWidth, MinHeight, MaxWidth, MaxHeight
+    end
+
+    function Section:ClampFloatSize(Size)
+        local MinWidth, MinHeight, MaxWidth, MaxHeight = Section:FloatLimits()
+        return Vector2.new(
+            math.clamp(Size.X, MinWidth, MaxWidth),
+            math.clamp(Size.Y, MinHeight, MaxHeight)
+        )
+    end
+
     function Section:Lift()
         local Position = Frame.AbsolutePosition - Library.DragHolder.AbsolutePosition
         local Size = Frame.AbsoluteSize
+        if Section.State == "Docked" and Size.X > 0 then
+            Section.BaseWidth = Size.X
+        end
 
         SetState("Dragging")
         Section.Column = nil
@@ -4140,18 +4041,24 @@ Library.Section = function(Self, Params)
     end
 
     function Section:Settle()
-        if Section.State ~= "Landing" then
-            return
-        end
+        if Section.State ~= "Landing" then return end
+
+        local Target = Section.Column
+        local Scroll = Target and Target.Scroll
+        if not Scroll then return end
 
         Library.Landing[Section] = nil
+
+        local ScreenPoint = Frame.AbsolutePosition
+        local LocalPoint = ScreenPoint - Scroll.AbsolutePosition + Scroll.CanvasPosition
+        Frame.Parent = Scroll
+        Frame.ZIndex = 1
+        Frame.Position = UDim2.fromOffset(math.floor(LocalPoint.X + 0.5), math.floor(LocalPoint.Y + 0.5))
         SetState("Docked")
 
-        Frame.Parent = Section.Column.Scroll
-        Frame.ZIndex = 1
-
-        Glide(Section, "Position", { Position = UDim2.fromOffset(2, Section.Y) }, true)
-        Glide(Section, "Size", { Size = UDim2.new(1, -4, 0, Section.Height) }, true)
+        local Destination = UDim2.fromOffset(2, Section.Y)
+        Glide(Section, "Position", { Position = Destination })
+        Glide(Section, "Size", { Size = UDim2.new(1, -4, 0, Section.Height) })
     end
 
     function Section:Dock(Target, Index)
@@ -4171,10 +4078,9 @@ Library.Section = function(Self, Params)
         Target:Layout()
 
         local Goal = Scroll.AbsolutePosition - Scroll.CanvasPosition - Origin + Vector2.new(2, Section.Y)
-
         Glide(Section, "Size", { Size = UDim2.fromOffset(Scroll.AbsoluteSize.X - 4, Section.Height) })
         Glide(Section, "Position", { Position = UDim2.fromOffset(Goal.X, Goal.Y) }).Completed:Connect(function(State)
-            if State == Enum.PlaybackState.Completed then
+            if State == Enum.PlaybackState.Completed and Section.State == "Landing" then
                 Section:Settle()
             end
         end)
@@ -4185,7 +4091,7 @@ Library.Section = function(Self, Params)
         local Size = Frame.AbsoluteSize
         local Screen = Library.Holder.AbsoluteSize
 
-        Section.FloatSize = Section.FloatSize or Vector2.new(Size.X, math.min(Size.Y, 420))
+        Section.FloatSize = Section:ClampFloatSize(Section.FloatSize or Vector2.new(Size.X, Section.Height))
 
         local Width, Height = Section.FloatSize.X, Section.FloatSize.Y
         local Goal = Vector2.new(
@@ -4240,10 +4146,10 @@ Library.Section = function(Self, Params)
         elseif Resizing then
             local Screen = Library.Holder.AbsoluteSize
             local Delta = Mouse - Resizing.Mouse
-            local Width = math.clamp(Resizing.Size.X + Delta.X, 150, math.max(Screen.X, 150))
-            local Height = math.clamp(Resizing.Size.Y + Delta.Y, 60, math.max(Screen.Y, 60))
+            local Size = Section:ClampFloatSize(Resizing.Size + Delta)
+            local Width, Height = Size.X, Size.Y
 
-            Section.FloatSize = Vector2.new(Width, Height)
+            Section.FloatSize = Size
             Glide(Section, "Size", { Size = UDim2.fromOffset(Width, Height) }, true)
         end
     end)
@@ -4637,6 +4543,34 @@ Library.Button = function(Self, Params)
     return setmetatable(Button, Library)
 end
 
+
+Library.ButtonPair = function(Self, LeftData, RightData)
+    LeftData = LeftData or {}
+    RightData = RightData or {}
+    local Row = New("Frame", {
+        Parent = Self.Container,
+        Size = UDim2.new(1, 0, 0, 20),
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder(),
+    })
+    New("UIListLayout", {
+        Parent = Row,
+        FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+    local Context = {
+        Container = Row,
+        Window = Self.Window,
+        Page = Self.Page,
+        Section = Self.Section or Self,
+    }
+    local Left = Library.Button(Context, LeftData)
+    local Right = Library.Button(Context, RightData)
+    Left.Items.Button.Instance.Size = UDim2.new(0.5, -3, 0, 20)
+    Right.Items.Button.Instance.Size = UDim2.new(0.5, -3, 0, 20)
+    return Left, Right
+end
 
 local MovingSliders = {}
 Connect(RunService.RenderStepped, function(Delta)
@@ -5395,14 +5329,14 @@ end
 
 
 
-Env.VergilLibrary = Library
+Env.UIv4Library = Library
 return Library
 end, function(err)
     local stack = (debug and type(debug.traceback) == "function") and debug.traceback() or ""
     return tostring(err) .. "\n" .. tostring(stack)
 end)
 if not loaded then
-    ShowVergilError(problem)
+    ShowUIv4Error(problem)
     error(problem, 0)
 end
 return problem
